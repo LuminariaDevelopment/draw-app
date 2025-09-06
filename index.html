@@ -2,69 +2,51 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Whiteboard</title>
-
-  <!-- iOS Safari: open as standalone (no browser UI) when launched from Home Screen -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Whiteboard">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
-  <!-- Use the whole screen including under the status bar; disable zoom for stable drawing -->
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="format-detection" content="telephone=no">
-  <meta name="theme-color" content="#ffffff">
-
-  <!-- Tiny inline icon (1×1 PNG — iOS will scale it; you can replace with a nicer 180×180 later) -->
-  <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=">
-
+  <!-- Fullscreen on iOS when added to Home Screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Whiteboard" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <!-- Helpful for Android and modern browsers -->
+  <meta name="theme-color" content="#ffffff" />
+  <!-- Fill the whole screen including iPhone safe areas -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Ultra-Minimal Whiteboard</title>
   <style>
-    :root {
-      /* tiny spacers that respect iOS safe areas in standalone mode */
-      --inset-top: max(8px, env(safe-area-inset-top));
-      --inset-left: max(8px, env(safe-area-inset-left));
-      --inset-bottom: max(8px, env(safe-area-inset-bottom));
-      --inset-right: max(8px, env(safe-area-inset-right));
-    }
     html, body {
       margin: 0;
       padding: 0;
-      background: #fff;
+      background: #ffffff;
       height: 100%;
-      width: 100%;
-      overflow: hidden;            /* no scroll */
+      overflow: hidden;
     }
-    /* Prevent rubber-band and pull-to-refresh feel */
-    body {
-      position: fixed;
-      inset: 0;
-      overscroll-behavior: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-    }
+    /* Canvas uses dynamic viewport height so it fills the screen
+       both in Safari and as an iOS Home Screen app. */
     canvas {
       display: block;
-      width: 100vw;
-      height: 100vh;
-      touch-action: none;          /* allow drawing with touch/Pencil */
+      width: 100dvw;   /* dynamic viewport units prevent toolbar jump */
+      height: 100dvh;
+      touch-action: none; /* enables smooth pen/touch drawing */
       cursor: crosshair;
     }
 
-    /* Ultra-minimal toolbar (eraser + 4 tiny swatches) */
+    /* Tiny, minimal toolbar */
     #toolbar {
       position: fixed;
-      top: var(--inset-top);
-      left: var(--inset-left);
+      /* Respect iPhone notches / status bar in standalone */
+      top: calc(env(safe-area-inset-top, 0px) + 8px);
+      left: calc(env(safe-area-inset-left, 0px) + 8px);
       display: flex;
       align-items: center;
       gap: 6px;
       z-index: 10;
-      background: rgba(255,255,255,0.7);
+      background: rgba(255,255,255,0.6);
       -webkit-backdrop-filter: blur(4px);
       backdrop-filter: blur(4px);
       padding: 4px 6px;
       border-radius: 999px;
       border: 1px solid rgba(0,0,0,0.08);
     }
+    /* Tiny pen/eraser toggle */
     #tool-toggle {
       width: 22px;
       height: 22px;
@@ -82,19 +64,26 @@
       background: #f2f2f2;
       box-shadow: inset 0 0 0 2px rgba(0,0,0,0.25);
     }
+    /* Very small color dots */
     .swatch {
-      width: 14px;   /* smaller color picker */
+      width: 14px;
       height: 14px;
       border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.25);
+      border: 1px solid rgba(0,0,0,0.2);
       cursor: pointer;
     }
     .swatch[data-active="true"] {
-      box-shadow: 0 0 0 2px rgba(0,0,0,0.28);
+      box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
+    }
+
+    /* If the app is launched as a standalone PWA (iOS/Android), you can target it: */
+    @media (display-mode: standalone) {
+      #toolbar { top: calc(env(safe-area-inset-top, 0px) + 8px); }
     }
   </style>
 </head>
 <body>
+  <!-- ultra-minimal toolbar -->
   <div id="toolbar" aria-label="Mini toolbar">
     <button id="tool-toggle" title="Toggle Eraser (E)" aria-pressed="false">✎</button>
     <button class="swatch" id="sw-black"  title="Black (1)"></button>
@@ -110,7 +99,7 @@
       const canvas = document.getElementById('board');
       const ctx = canvas.getContext('2d', { alpha: false });
 
-      // toolbar elements
+      // Toolbar elements
       const btnToggle = document.getElementById('tool-toggle');
       const swatches = {
         black: document.getElementById('sw-black'),
@@ -119,24 +108,24 @@
         blue:  document.getElementById('sw-blue')
       };
 
-      // tiny color set
+      // Tiny palette: 1–4
       const COLORS = {
         '1': '#000000', // black
         '2': '#e74c3c', // red
         '3': '#27ae60', // green
         '4': '#3498db'  // blue
       };
-      const COLOR_KEYS = ['1', '2', '3', '4'];
+      const COLOR_KEYS = ['1','2','3','4'];
 
-      // apply colors to swatches
+      // Apply color to UI
       swatches.black.style.background = COLORS['1'];
       swatches.red.style.background   = COLORS['2'];
       swatches.green.style.background = COLORS['3'];
       swatches.blue.style.background  = COLORS['4'];
 
-      // drawing state
+      // Drawing state
       let drawing = false;
-      let strokes = [];     // finished strokes for undo
+      let strokes = [];     // finished strokes
       let redoStack = [];   // redo history
       let currentStroke = null;
 
@@ -145,7 +134,7 @@
       const baseLineWidth = 3;        // pen width (CSS px)
       const eraserWidth   = 16;       // eraser width (CSS px)
 
-      // track css size for correct clearing
+      // Track CSS size for clear/repaint
       let cssW = 0, cssH = 0;
 
       function setActiveSwatchByColor(hex) {
@@ -162,34 +151,47 @@
         btnToggle.title = isEraser ? 'Pen (E)' : 'Eraser (E)';
         btnToggle.textContent = isEraser ? '⌫' : '✎';
       }
+
       function toggleEraser() {
         isEraser = !isEraser;
         setToggleUI();
       }
 
+      // Use visualViewport when available for more accurate height on iOS Safari
+      function getViewportSize() {
+        const vv = window.visualViewport;
+        return {
+          width: Math.round((vv ? vv.width : window.innerWidth)),
+          height: Math.round((vv ? vv.height : window.innerHeight))
+        };
+      }
+
       function resizeToViewport() {
         const dpr = window.devicePixelRatio || 1;
-        cssW = Math.max(1, Math.floor(window.innerWidth));
-        cssH = Math.max(1, Math.floor(window.innerHeight));
+        const { width, height } = getViewportSize();
 
-        // CSS size (for layout & pointer coords)
+        cssW = Math.max(1, width);
+        cssH = Math.max(1, height);
+
+        // Ensure CSS size matches viewport
         canvas.style.width = cssW + 'px';
         canvas.style.height = cssH + 'px';
 
-        // Backing pixel size
+        // Backing store size scaled by DPR
         canvas.width = Math.max(1, Math.floor(cssW * dpr));
         canvas.height = Math.max(1, Math.floor(cssH * dpr));
 
-        // Scale so 1 unit == 1 CSS pixel
+        // Configure drawing context in CSS pixel units
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.scale(dpr, dpr);
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
+
         repaint();
       }
 
       function clearToWhite() {
-        // ctx is scaled to CSS pixels, so clear in CSS units
+        // ctx is scaled to CSS pixels, so fill with CSS units
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, cssW, cssH);
       }
@@ -275,7 +277,7 @@
         repaint();
       }
 
-      // pointer events
+      // Pointer events
       canvas.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         canvas.setPointerCapture(e.pointerId);
@@ -297,7 +299,7 @@
       canvas.addEventListener('pointerout', stopPointer);
       canvas.addEventListener('pointerleave', stopPointer);
 
-      // toolbar interactions
+      // Toolbar interactions
       btnToggle.addEventListener('click', toggleEraser);
       function pick(hex) {
         currentColor = hex;
@@ -310,21 +312,21 @@
       swatches.green.addEventListener('click', () => pick(COLORS['3']));
       swatches.blue.addEventListener('click',  () => pick(COLORS['4']));
 
-      // keyboard shortcuts
+      // Keyboard shortcuts
       window.addEventListener('keydown', (e) => {
         const key = e.key;
 
-        // color keys 1..4
+        // Colors 1..4
         if (!e.ctrlKey && !e.metaKey && COLOR_KEYS.includes(key)) {
           pick(COLORS[key]);
           return;
         }
-        // eraser toggle
+        // Eraser toggle
         if (!e.ctrlKey && !e.metaKey && (key === 'e' || key === 'E')) {
           toggleEraser();
           return;
         }
-        // undo / redo
+        // Undo / Redo
         const isMod = e.ctrlKey || e.metaKey;
         if (isMod && key.toLowerCase() === 'z' && !e.shiftKey) {
           e.preventDefault();
@@ -335,14 +337,25 @@
         }
       });
 
-      // Prevent the long-press context menu / callout on iOS
+      // Handle viewport changes (especially iOS address bar show/hide)
+      const vv = window.visualViewport;
+      if (vv) vv.addEventListener('resize', resizeToViewport);
+      window.addEventListener('resize', resizeToViewport);
+
+      // Prevent iOS Safari long-press callout and selection while drawing
+      document.addEventListener('gesturestart', (e) => e.preventDefault());
+      document.addEventListener('selectstart', (e) => e.preventDefault());
       window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-      // init
+      // Init
       setActiveSwatchByColor(currentColor);
       setToggleUI();
       resizeToViewport();
-      addEventListener('resize', resizeToViewport);
+
+      // If launched from Home Screen (iOS), navigator.standalone is true
+      // We don't need to do anything special besides sizing & safe-area handling,
+      // but this line proves the mode if you ever want to branch styles:
+      if (window.navigator.standalone) document.documentElement.classList.add('ios-standalone');
     })();
   </script>
 </body>
