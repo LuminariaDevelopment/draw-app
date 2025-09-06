@@ -2,40 +2,69 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ultra-Minimal Whiteboard</title>
+  <title>Whiteboard</title>
+
+  <!-- iOS Safari: open as standalone (no browser UI) when launched from Home Screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Whiteboard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <!-- Use the whole screen including under the status bar; disable zoom for stable drawing -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="theme-color" content="#ffffff">
+
+  <!-- Tiny inline icon (1×1 PNG — iOS will scale it; you can replace with a nicer 180×180 later) -->
+  <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=">
+
   <style>
+    :root {
+      /* tiny spacers that respect iOS safe areas in standalone mode */
+      --inset-top: max(8px, env(safe-area-inset-top));
+      --inset-left: max(8px, env(safe-area-inset-left));
+      --inset-bottom: max(8px, env(safe-area-inset-bottom));
+      --inset-right: max(8px, env(safe-area-inset-right));
+    }
     html, body {
       margin: 0;
       padding: 0;
-      background: #ffffff;
+      background: #fff;
       height: 100%;
-      overflow: hidden;
+      width: 100%;
+      overflow: hidden;            /* no scroll */
+    }
+    /* Prevent rubber-band and pull-to-refresh feel */
+    body {
+      position: fixed;
+      inset: 0;
+      overscroll-behavior: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
     canvas {
       display: block;
       width: 100vw;
       height: 100vh;
-      touch-action: none; /* enables smooth pen/touch drawing */
+      touch-action: none;          /* allow drawing with touch/Pencil */
       cursor: crosshair;
     }
-    /* ultra-minimal toolbar */
+
+    /* Ultra-minimal toolbar (eraser + 4 tiny swatches) */
     #toolbar {
       position: fixed;
-      top: 8px;
-      left: 8px;
+      top: var(--inset-top);
+      left: var(--inset-left);
       display: flex;
       align-items: center;
       gap: 6px;
       z-index: 10;
-      background: rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.7);
       -webkit-backdrop-filter: blur(4px);
       backdrop-filter: blur(4px);
       padding: 4px 6px;
       border-radius: 999px;
       border: 1px solid rgba(0,0,0,0.08);
     }
-    /* tiny pen/eraser toggle button */
     #tool-toggle {
       width: 22px;
       height: 22px;
@@ -53,16 +82,15 @@
       background: #f2f2f2;
       box-shadow: inset 0 0 0 2px rgba(0,0,0,0.25);
     }
-    /* very small color swatches */
     .swatch {
-      width: 16px;
-      height: 16px;
+      width: 14px;   /* smaller color picker */
+      height: 14px;
       border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.2);
+      border: 1px solid rgba(0,0,0,0.25);
       cursor: pointer;
     }
     .swatch[data-active="true"] {
-      box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
+      box-shadow: 0 0 0 2px rgba(0,0,0,0.28);
     }
   </style>
 </head>
@@ -98,7 +126,7 @@
         '3': '#27ae60', // green
         '4': '#3498db'  // blue
       };
-      const COLOR_KEYS = ['1','2','3','4'];
+      const COLOR_KEYS = ['1', '2', '3', '4'];
 
       // apply colors to swatches
       swatches.black.style.background = COLORS['1'];
@@ -134,7 +162,6 @@
         btnToggle.title = isEraser ? 'Pen (E)' : 'Eraser (E)';
         btnToggle.textContent = isEraser ? '⌫' : '✎';
       }
-
       function toggleEraser() {
         isEraser = !isEraser;
         setToggleUI();
@@ -144,11 +171,16 @@
         const dpr = window.devicePixelRatio || 1;
         cssW = Math.max(1, Math.floor(window.innerWidth));
         cssH = Math.max(1, Math.floor(window.innerHeight));
+
+        // CSS size (for layout & pointer coords)
         canvas.style.width = cssW + 'px';
         canvas.style.height = cssH + 'px';
+
+        // Backing pixel size
         canvas.width = Math.max(1, Math.floor(cssW * dpr));
         canvas.height = Math.max(1, Math.floor(cssH * dpr));
 
+        // Scale so 1 unit == 1 CSS pixel
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.scale(dpr, dpr);
         ctx.lineJoin = 'round';
@@ -303,12 +335,14 @@
         }
       });
 
+      // Prevent the long-press context menu / callout on iOS
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+
       // init
       setActiveSwatchByColor(currentColor);
       setToggleUI();
       resizeToViewport();
       addEventListener('resize', resizeToViewport);
-      window.addEventListener('contextmenu', (e) => e.preventDefault());
     })();
   </script>
 </body>
