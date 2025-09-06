@@ -1,258 +1,315 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ultra-Minimal Whiteboard</title>
-    <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        background: #ffffff;
-        height: 100%;
-        overflow: hidden;
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ultra-Minimal Whiteboard</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      height: 100%;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: none; /* enables smooth pen/touch drawing */
+      cursor: crosshair;
+    }
+    /* ultra-minimal toolbar */
+    #toolbar {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 10;
+      background: rgba(255,255,255,0.6);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+      padding: 4px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.08);
+    }
+    /* tiny pen/eraser toggle button */
+    #tool-toggle {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid rgba(0,0,0,0.15);
+      background: #fff;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+    }
+    #tool-toggle.active { /* eraser on */
+      background: #f2f2f2;
+      box-shadow: inset 0 0 0 2px rgba(0,0,0,0.25);
+    }
+    /* very small color swatches */
+    .swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.2);
+      cursor: pointer;
+    }
+    .swatch[data-active="true"] {
+      box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar" aria-label="Mini toolbar">
+    <button id="tool-toggle" title="Toggle Eraser (E)" aria-pressed="false">✎</button>
+    <button class="swatch" id="sw-black"  title="Black (1)"></button>
+    <button class="swatch" id="sw-red"    title="Red (2)"></button>
+    <button class="swatch" id="sw-green"  title="Green (3)"></button>
+    <button class="swatch" id="sw-blue"   title="Blue (4)"></button>
+  </div>
+
+  <canvas id="board"></canvas>
+
+  <script>
+    (function () {
+      const canvas = document.getElementById('board');
+      const ctx = canvas.getContext('2d', { alpha: false });
+
+      // toolbar elements
+      const btnToggle = document.getElementById('tool-toggle');
+      const swatches = {
+        black: document.getElementById('sw-black'),
+        red:   document.getElementById('sw-red'),
+        green: document.getElementById('sw-green'),
+        blue:  document.getElementById('sw-blue')
+      };
+
+      // tiny color set
+      const COLORS = {
+        '1': '#000000', // black
+        '2': '#e74c3c', // red
+        '3': '#27ae60', // green
+        '4': '#3498db'  // blue
+      };
+      const COLOR_KEYS = ['1','2','3','4'];
+
+      // apply colors to swatches
+      swatches.black.style.background = COLORS['1'];
+      swatches.red.style.background   = COLORS['2'];
+      swatches.green.style.background = COLORS['3'];
+      swatches.blue.style.background  = COLORS['4'];
+
+      // drawing state
+      let drawing = false;
+      let strokes = [];     // finished strokes for undo
+      let redoStack = [];   // redo history
+      let currentStroke = null;
+
+      let currentColor = COLORS['1']; // default black
+      let isEraser = false;           // toggled by button / 'E'
+      const baseLineWidth = 3;        // pen width (CSS px)
+      const eraserWidth   = 16;       // eraser width (CSS px)
+
+      // track css size for correct clearing
+      let cssW = 0, cssH = 0;
+
+      function setActiveSwatchByColor(hex) {
+        for (const el of Object.values(swatches)) el.dataset.active = 'false';
+        if      (hex === COLORS['1']) swatches.black.dataset.active = 'true';
+        else if (hex === COLORS['2']) swatches.red.dataset.active   = 'true';
+        else if (hex === COLORS['3']) swatches.green.dataset.active = 'true';
+        else if (hex === COLORS['4']) swatches.blue.dataset.active  = 'true';
       }
-      canvas {
-        display: block;
-        width: 100vw;
-        height: 100vh;
-        touch-action: none;
-        cursor: crosshair;
+
+      function setToggleUI() {
+        btnToggle.classList.toggle('active', isEraser);
+        btnToggle.setAttribute('aria-pressed', String(isEraser));
+        btnToggle.title = isEraser ? 'Pen (E)' : 'Eraser (E)';
+        btnToggle.textContent = isEraser ? '⌫' : '✎';
       }
-      #toolbar {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        display: flex;
-        gap: 10px;
-        z-index: 10;
-        background: transparent;
+
+      function toggleEraser() {
+        isEraser = !isEraser;
+        setToggleUI();
       }
-      .swatch {
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        border: 1px solid rgba(0,0,0,0.15);
-        box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-        cursor: pointer;
+
+      function resizeToViewport() {
+        const dpr = window.devicePixelRatio || 1;
+        cssW = Math.max(1, Math.floor(window.innerWidth));
+        cssH = Math.max(1, Math.floor(window.innerHeight));
+        canvas.style.width = cssW + 'px';
+        canvas.style.height = cssH + 'px';
+        canvas.width = Math.max(1, Math.floor(cssW * dpr));
+        canvas.height = Math.max(1, Math.floor(cssH * dpr));
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        repaint();
       }
-      .swatch:active { transform: scale(0.96); }
-      .swatch[data-active="true"] {
-        box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
+
+      function clearToWhite() {
+        // ctx is scaled to CSS pixels, so clear in CSS units
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cssW, cssH);
       }
-    </style>
-  </head>
-  <body>
-    <div id="toolbar" aria-label="Color picker">
-      <button class="swatch" id="sw-black"  title="Black (1)"></button>
-      <button class="swatch" id="sw-red"    title="Red (2)"></button>
-      <button class="swatch" id="sw-green"  title="Green (3)"></button>
-      <button class="swatch" id="sw-blue"   title="Blue (4)"></button>
-    </div>
-    <canvas id="board"></canvas>
-    <script>
-      (function () {
-        const canvas = document.getElementById('board');
-        const ctx = canvas.getContext('2d', { alpha: false });
-        const swatches = {
-          black: document.getElementById('sw-black'),
-          red:   document.getElementById('sw-red'),
-          green: document.getElementById('sw-green'),
-          blue:  document.getElementById('sw-blue')
-        };
 
-        const COLORS = {
-          '1': '#000000',
-          '2': '#e74c3c',
-          '3': '#27ae60',
-          '4': '#3498db'
-        };
-        const COLOR_KEYS = ['1','2','3','4'];
-
-        swatches.black.style.background = COLORS['1'];
-        swatches.red.style.background   = COLORS['2'];
-        swatches.green.style.background = COLORS['3'];
-        swatches.blue.style.background  = COLORS['4'];
-
-        let drawing = false;
-        let strokes = [];
-        let redoStack = [];
-        let currentStroke = null;
-
-        let currentColor = COLORS['1'];
-        let isEraser = false;
-        const baseLineWidth = 3;
-        const eraserWidth = 16;
-
-        let lastPenTapTime = 0;
-        let lastPenTapX = 0;
-        let lastPenTapY = 0;
-        const PEN_DT_MS = 300;
-        const PEN_MAX_DIST = 30;
-
-        function setActiveSwatchByColor(hex) {
-          for (const el of Object.values(swatches)) el.dataset.active = 'false';
-          if (hex === COLORS['1']) swatches.black.dataset.active = 'true';
-          else if (hex === COLORS['2']) swatches.red.dataset.active = 'true';
-          else if (hex === COLORS['3']) swatches.green.dataset.active = 'true';
-          else if (hex === COLORS['4']) swatches.blue.dataset.active = 'true';
-        }
-
-        function toggleEraser() { isEraser = !isEraser; }
-
-        function resizeToViewport() {
-          const dpr = window.devicePixelRatio || 1;
-          const cssW = Math.max(1, Math.floor(window.innerWidth));
-          const cssH = Math.max(1, Math.floor(window.innerHeight));
-          canvas.style.width = cssW + 'px';
-          canvas.style.height = cssH + 'px';
-          canvas.width = Math.max(1, Math.floor(cssW * dpr));
-          canvas.height = Math.max(1, Math.floor(cssH * dpr));
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.scale(dpr, dpr);
-          ctx.lineJoin = 'round';
-          ctx.lineCap = 'round';
-          repaint();
-        }
-        function clearToWhite() {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        function drawStroke(stroke) {
-          if (!stroke || stroke.points.length === 0) return;
-          ctx.strokeStyle = stroke.color;
-          ctx.lineWidth = stroke.width;
-          const pts = stroke.points;
-          if (pts.length === 1) {
-            ctx.fillStyle = stroke.color;
-            ctx.beginPath();
-            ctx.arc(pts[0].x, pts[0].y, stroke.width / 2, 0, Math.PI * 2);
-            ctx.fill();
-            return;
-          }
+      function drawStroke(stroke) {
+        if (!stroke || stroke.points.length === 0) return;
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.width;
+        const pts = stroke.points;
+        if (pts.length === 1) {
+          ctx.fillStyle = stroke.color;
           ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+          ctx.arc(pts[0].x, pts[0].y, stroke.width / 2, 0, Math.PI * 2);
+          ctx.fill();
+          return;
+        }
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+      }
+
+      function repaint() {
+        clearToWhite();
+        for (const s of strokes) drawStroke(s);
+        if (currentStroke) drawStroke(currentStroke);
+      }
+
+      function strokeColorForTool() {
+        return isEraser ? '#ffffff' : currentColor;
+      }
+      function strokeWidthForTool() {
+        return isEraser ? eraserWidth : baseLineWidth;
+      }
+
+      function startDraw(x, y) {
+        drawing = true;
+        currentStroke = {
+          color: strokeColorForTool(),
+          width: strokeWidthForTool(),
+          points: [{ x, y }]
+        };
+      }
+
+      function addPoint(x, y) {
+        if (!drawing || !currentStroke) return;
+        const pts = currentStroke.points;
+        const last = pts[pts.length - 1];
+        if (last && last.x === x && last.y === y) return;
+        currentStroke.points.push({ x, y });
+
+        // draw latest segment for responsiveness
+        if (pts.length >= 2) {
+          ctx.strokeStyle = currentStroke.color;
+          ctx.lineWidth = currentStroke.width;
+          ctx.beginPath();
+          const n = pts.length;
+          ctx.moveTo(pts[n - 2].x, pts[n - 2].y);
+          ctx.lineTo(pts[n - 1].x, pts[n - 1].y);
           ctx.stroke();
         }
-        function repaint() {
-          clearToWhite();
-          for (const s of strokes) drawStroke(s);
-          if (currentStroke) drawStroke(currentStroke);
-        }
-        function strokeColorForTool() { return isEraser ? '#ffffff' : currentColor; }
-        function strokeWidthForTool() { return isEraser ? eraserWidth : baseLineWidth; }
-        function startDraw(x, y) {
-          drawing = true;
-          currentStroke = { color: strokeColorForTool(), width: strokeWidthForTool(), points: [{ x, y }] };
-        }
-        function addPoint(x, y) {
-          if (!drawing || !currentStroke) return;
-          const pts = currentStroke.points;
-          const last = pts[pts.length - 1];
-          if (last && last.x === x && last.y === y) return;
-          currentStroke.points.push({ x, y });
-          if (pts.length >= 2) {
-            ctx.strokeStyle = currentStroke.color;
-            ctx.lineWidth = currentStroke.width;
-            ctx.beginPath();
-            const n = pts.length;
-            ctx.moveTo(pts[n - 2].x, pts[n - 2].y);
-            ctx.lineTo(pts[n - 1].x, pts[n - 1].y);
-            ctx.stroke();
-          }
-        }
-        function endDraw() {
-          if (!drawing) return;
-          drawing = false;
-          if (currentStroke && currentStroke.points.length > 0) {
-            strokes.push(currentStroke);
-            redoStack = [];
-          }
-          currentStroke = null;
-        }
-        function undo() {
-          if (strokes.length === 0) return;
-          redoStack.push(strokes.pop());
-          repaint();
-        }
-        function redo() {
-          if (redoStack.length === 0) return;
-          strokes.push(redoStack.pop());
-          repaint();
-        }
+      }
 
-        canvas.addEventListener('pointerdown', (e) => {
+      function endDraw() {
+        if (!drawing) return;
+        drawing = false;
+        if (currentStroke && currentStroke.points.length > 0) {
+          strokes.push(currentStroke);
+          redoStack = []; // new stroke invalidates redo history
+        }
+        currentStroke = null;
+      }
+
+      function undo() {
+        if (strokes.length === 0) return;
+        redoStack.push(strokes.pop());
+        repaint();
+      }
+
+      function redo() {
+        if (redoStack.length === 0) return;
+        strokes.push(redoStack.pop());
+        repaint();
+      }
+
+      // pointer events
+      canvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        startDraw(e.clientX, e.clientY);
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!drawing) return;
+        e.preventDefault();
+        addPoint(e.clientX, e.clientY);
+      });
+      function stopPointer(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        endDraw();
+        try { canvas.releasePointerCapture(e.pointerId); } catch {}
+      }
+      canvas.addEventListener('pointerup', stopPointer);
+      canvas.addEventListener('pointercancel', stopPointer);
+      canvas.addEventListener('pointerout', stopPointer);
+      canvas.addEventListener('pointerleave', stopPointer);
+
+      // toolbar interactions
+      btnToggle.addEventListener('click', toggleEraser);
+      function pick(hex) {
+        currentColor = hex;
+        isEraser = false;
+        setToggleUI();
+        setActiveSwatchByColor(hex);
+      }
+      swatches.black.addEventListener('click', () => pick(COLORS['1']));
+      swatches.red.addEventListener('click',   () => pick(COLORS['2']));
+      swatches.green.addEventListener('click', () => pick(COLORS['3']));
+      swatches.blue.addEventListener('click',  () => pick(COLORS['4']));
+
+      // keyboard shortcuts
+      window.addEventListener('keydown', (e) => {
+        const key = e.key;
+
+        // color keys 1..4
+        if (!e.ctrlKey && !e.metaKey && COLOR_KEYS.includes(key)) {
+          pick(COLORS[key]);
+          return;
+        }
+        // eraser toggle
+        if (!e.ctrlKey && !e.metaKey && (key === 'e' || key === 'E')) {
+          toggleEraser();
+          return;
+        }
+        // undo / redo
+        const isMod = e.ctrlKey || e.metaKey;
+        if (isMod && key.toLowerCase() === 'z' && !e.shiftKey) {
           e.preventDefault();
-          if (e.pointerType === 'pen') {
-            const now = performance.now();
-            const dt = now - lastPenTapTime;
-            const dx = e.clientX - lastPenTapX;
-            const dy = e.clientY - lastPenTapY;
-            const dist = Math.hypot(dx, dy);
-            if (dt <= PEN_DT_MS && dist <= PEN_MAX_DIST) {
-              toggleEraser();
-              lastPenTapTime = 0;
-              return;
-            }
-            lastPenTapTime = now;
-            lastPenTapX = e.clientX;
-            lastPenTapY = e.clientY;
-          }
-          canvas.setPointerCapture(e.pointerId);
-          startDraw(e.clientX, e.clientY);
-        });
-        canvas.addEventListener('pointermove', (e) => {
-          if (!drawing) return;
+          undo();
+        } else if (isMod && ((key.toLowerCase() === 'z' && e.shiftKey) || key.toLowerCase() === 'y')) {
           e.preventDefault();
-          addPoint(e.clientX, e.clientY);
-        });
-        function stopPointer(e) {
-          if (!drawing) return;
-          e.preventDefault();
-          endDraw();
-          try { canvas.releasePointerCapture(e.pointerId); } catch {}
+          redo();
         }
-        canvas.addEventListener('pointerup', stopPointer);
-        canvas.addEventListener('pointercancel', stopPointer);
-        canvas.addEventListener('pointerout', stopPointer);
-        canvas.addEventListener('pointerleave', stopPointer);
+      });
 
-        function pick(hex) {
-          currentColor = hex;
-          isEraser = false;
-          setActiveSwatchByColor(hex);
-        }
-        swatches.black.addEventListener('click', () => pick(COLORS['1']));
-        swatches.red.addEventListener('click',   () => pick(COLORS['2']));
-        swatches.green.addEventListener('click', () => pick(COLORS['3']));
-        swatches.blue.addEventListener('click',  () => pick(COLORS['4']));
-
-        window.addEventListener('keydown', (e) => {
-          const key = e.key;
-          if (!e.ctrlKey && !e.metaKey && COLOR_KEYS.includes(key)) {
-            pick(COLORS[key]);
-            return;
-          }
-          if (!e.ctrlKey && !e.metaKey && (key === 'e' || key === 'E')) {
-            toggleEraser();
-            return;
-          }
-          const isMod = e.ctrlKey || e.metaKey;
-          if (isMod && key.toLowerCase() === 'z' && !e.shiftKey) {
-            e.preventDefault();
-            undo();
-          } else if (isMod && ((key.toLowerCase() === 'z' && e.shiftKey) || key.toLowerCase() === 'y')) {
-            e.preventDefault();
-            redo();
-          }
-        });
-
-        setActiveSwatchByColor(currentColor);
-        resizeToViewport();
-        addEventListener('resize', resizeToViewport);
-        window.addEventListener('contextmenu', (e) => e.preventDefault());
-      })();
-    </script>
-  </body>
+      // init
+      setActiveSwatchByColor(currentColor);
+      setToggleUI();
+      resizeToViewport();
+      addEventListener('resize', resizeToViewport);
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+    })();
+  </script>
+</body>
 </html>
