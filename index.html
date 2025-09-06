@@ -6,33 +6,37 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Whiteboard" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <!-- Helpful for Android and modern browsers -->
+  <!-- Avoid phone number auto-linking & keep status bars white -->
+  <meta name="format-detection" content="telephone=no" />
   <meta name="theme-color" content="#ffffff" />
-  <!-- Fill the whole screen including iPhone safe areas -->
+  <!-- Fill the whole screen, respect iOS safe areas, prevent zoom -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>Ultra-Minimal Whiteboard</title>
   <style>
+    :root { --pen-color: #000000; }
+    * { -webkit-tap-highlight-color: transparent; }
     html, body {
       margin: 0;
       padding: 0;
       background: #ffffff;
       height: 100%;
       overflow: hidden;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
     }
-    /* Canvas uses dynamic viewport height so it fills the screen
-       both in Safari and as an iOS Home Screen app. */
     canvas {
       display: block;
-      width: 100dvw;   /* dynamic viewport units prevent toolbar jump */
+      width: 100dvw;   /* dynamic viewport stops address-bar jump */
       height: 100dvh;
-      touch-action: none; /* enables smooth pen/touch drawing */
+      touch-action: none;  /* disable scrolling/pinch so drawing works */
       cursor: crosshair;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
     }
 
     /* Tiny, minimal toolbar */
     #toolbar {
       position: fixed;
-      /* Respect iPhone notches / status bar in standalone */
       top: calc(env(safe-area-inset-top, 0px) + 8px);
       left: calc(env(safe-area-inset-left, 0px) + 8px);
       display: flex;
@@ -45,25 +49,27 @@
       padding: 4px 6px;
       border-radius: 999px;
       border: 1px solid rgba(0,0,0,0.08);
+      -webkit-user-select: none; user-select: none;
     }
-    /* Tiny pen/eraser toggle */
+
+    /* Pen/Eraser toggle — square solid for pen, open square for eraser */
     #tool-toggle {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      display: inline-grid;
-      place-items: center;
-      border: 1px solid rgba(0,0,0,0.15);
-      background: #fff;
-      font-size: 12px;
-      line-height: 1;
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      border: 1px solid rgba(0,0,0,0.2);
+      background: var(--pen-color); /* solid square when pen */
       cursor: pointer;
-      user-select: none;
+      padding: 0;
+      display: inline-block;
+      outline: none;
+      appearance: none;
     }
-    #tool-toggle.active { /* eraser on */
-      background: #f2f2f2;
-      box-shadow: inset 0 0 0 2px rgba(0,0,0,0.25);
+    #tool-toggle.eraser {
+      background: transparent;       /* open square when eraser */
+      border: 2px solid rgba(0,0,0,0.6);
     }
+
     /* Very small color dots */
     .swatch {
       width: 14px;
@@ -71,12 +77,14 @@
       border-radius: 50%;
       border: 1px solid rgba(0,0,0,0.2);
       cursor: pointer;
+      padding: 0;
+      outline: none;
+      appearance: none;
     }
     .swatch[data-active="true"] {
       box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
     }
 
-    /* If the app is launched as a standalone PWA (iOS/Android), you can target it: */
     @media (display-mode: standalone) {
       #toolbar { top: calc(env(safe-area-inset-top, 0px) + 8px); }
     }
@@ -85,11 +93,11 @@
 <body>
   <!-- ultra-minimal toolbar -->
   <div id="toolbar" aria-label="Mini toolbar">
-    <button id="tool-toggle" title="Toggle Eraser (E)" aria-pressed="false">✎</button>
-    <button class="swatch" id="sw-black"  title="Black (1)"></button>
-    <button class="swatch" id="sw-red"    title="Red (2)"></button>
-    <button class="swatch" id="sw-green"  title="Green (3)"></button>
-    <button class="swatch" id="sw-blue"   title="Blue (4)"></button>
+    <button id="tool-toggle" title="Toggle Eraser (E)" aria-pressed="false" aria-label="Toggle eraser"></button>
+    <button class="swatch" id="sw-black"  title="Black (1)"  aria-label="Black"></button>
+    <button class="swatch" id="sw-red"    title="Red (2)"    aria-label="Red"></button>
+    <button class="swatch" id="sw-green"  title="Green (3)"  aria-label="Green"></button>
+    <button class="swatch" id="sw-blue"   title="Blue (4)"   aria-label="Blue"></button>
   </div>
 
   <canvas id="board"></canvas>
@@ -108,16 +116,16 @@
         blue:  document.getElementById('sw-blue')
       };
 
-      // Tiny palette: 1–4
+      // Color palette: 1–4
       const COLORS = {
-        '1': '#000000', // black
-        '2': '#e74c3c', // red
-        '3': '#27ae60', // green
-        '4': '#3498db'  // blue
+        '1': '#000000',
+        '2': '#e74c3c',
+        '3': '#27ae60',
+        '4': '#3498db'
       };
       const COLOR_KEYS = ['1','2','3','4'];
 
-      // Apply color to UI
+      // Apply color to swatches
       swatches.black.style.background = COLORS['1'];
       swatches.red.style.background   = COLORS['2'];
       swatches.green.style.background = COLORS['3'];
@@ -137,6 +145,10 @@
       // Track CSS size for clear/repaint
       let cssW = 0, cssH = 0;
 
+      // Only allow ONE active pointer (prevents two fingers drawing two lines)
+      let activePointerId = null;
+
+      // --- UI helpers ---
       function setActiveSwatchByColor(hex) {
         for (const el of Object.values(swatches)) el.dataset.active = 'false';
         if      (hex === COLORS['1']) swatches.black.dataset.active = 'true';
@@ -144,20 +156,21 @@
         else if (hex === COLORS['3']) swatches.green.dataset.active = 'true';
         else if (hex === COLORS['4']) swatches.blue.dataset.active  = 'true';
       }
-
+      function updatePenColorVar() {
+        document.documentElement.style.setProperty('--pen-color', currentColor);
+      }
       function setToggleUI() {
-        btnToggle.classList.toggle('active', isEraser);
+        // solid square when pen; open square when eraser
+        btnToggle.classList.toggle('eraser', isEraser);
         btnToggle.setAttribute('aria-pressed', String(isEraser));
         btnToggle.title = isEraser ? 'Pen (E)' : 'Eraser (E)';
-        btnToggle.textContent = isEraser ? '⌫' : '✎';
       }
-
       function toggleEraser() {
         isEraser = !isEraser;
         setToggleUI();
       }
 
-      // Use visualViewport when available for more accurate height on iOS Safari
+      // Use visualViewport for iOS Safari accurate height
       function getViewportSize() {
         const vv = window.visualViewport;
         return {
@@ -165,7 +178,6 @@
           height: Math.round((vv ? vv.height : window.innerHeight))
         };
       }
-
       function resizeToViewport() {
         const dpr = window.devicePixelRatio || 1;
         const { width, height } = getViewportSize();
@@ -173,11 +185,11 @@
         cssW = Math.max(1, width);
         cssH = Math.max(1, height);
 
-        // Ensure CSS size matches viewport
+        // CSS size
         canvas.style.width = cssW + 'px';
         canvas.style.height = cssH + 'px';
 
-        // Backing store size scaled by DPR
+        // Backing store size
         canvas.width = Math.max(1, Math.floor(cssW * dpr));
         canvas.height = Math.max(1, Math.floor(cssH * dpr));
 
@@ -190,12 +202,11 @@
         repaint();
       }
 
+      // --- drawing helpers ---
       function clearToWhite() {
-        // ctx is scaled to CSS pixels, so fill with CSS units
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, cssW, cssH);
       }
-
       function drawStroke(stroke) {
         if (!stroke || stroke.points.length === 0) return;
         ctx.strokeStyle = stroke.color;
@@ -213,20 +224,17 @@
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
       }
-
       function repaint() {
         clearToWhite();
         for (const s of strokes) drawStroke(s);
         if (currentStroke) drawStroke(currentStroke);
       }
-
       function strokeColorForTool() {
         return isEraser ? '#ffffff' : currentColor;
       }
       function strokeWidthForTool() {
         return isEraser ? eraserWidth : baseLineWidth;
       }
-
       function startDraw(x, y) {
         drawing = true;
         currentStroke = {
@@ -235,7 +243,6 @@
           points: [{ x, y }]
         };
       }
-
       function addPoint(x, y) {
         if (!drawing || !currentStroke) return;
         const pts = currentStroke.points;
@@ -254,7 +261,6 @@
           ctx.stroke();
         }
       }
-
       function endDraw() {
         if (!drawing) return;
         drawing = false;
@@ -264,45 +270,55 @@
         }
         currentStroke = null;
       }
-
       function undo() {
         if (strokes.length === 0) return;
         redoStack.push(strokes.pop());
         repaint();
       }
-
       function redo() {
         if (redoStack.length === 0) return;
         strokes.push(redoStack.pop());
         repaint();
       }
 
-      // Pointer events
+      // --- pointer handling (single active pointer only) ---
       canvas.addEventListener('pointerdown', (e) => {
         e.preventDefault();
+        // If another finger/stylus is already drawing, ignore additional pointers
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
+
+        activePointerId = e.pointerId;
         canvas.setPointerCapture(e.pointerId);
         startDraw(e.clientX, e.clientY);
       });
+
       canvas.addEventListener('pointermove', (e) => {
-        if (!drawing) return;
+        if (e.pointerId !== activePointerId) return;
         e.preventDefault();
+        if (!drawing) return;
         addPoint(e.clientX, e.clientY);
       });
+
       function stopPointer(e) {
-        if (!drawing) return;
+        if (e.pointerId !== activePointerId) return;
         e.preventDefault();
         endDraw();
         try { canvas.releasePointerCapture(e.pointerId); } catch {}
+        activePointerId = null;
       }
       canvas.addEventListener('pointerup', stopPointer);
       canvas.addEventListener('pointercancel', stopPointer);
       canvas.addEventListener('pointerout', stopPointer);
       canvas.addEventListener('pointerleave', stopPointer);
 
-      // Toolbar interactions
-      btnToggle.addEventListener('click', toggleEraser);
+      // --- toolbar interactions ---
+      btnToggle.addEventListener('click', () => {
+        toggleEraser();
+      });
+
       function pick(hex) {
         currentColor = hex;
+        updatePenColorVar();    // update solid square color when pen
         isEraser = false;
         setToggleUI();
         setActiveSwatchByColor(hex);
@@ -312,21 +328,21 @@
       swatches.green.addEventListener('click', () => pick(COLORS['3']));
       swatches.blue.addEventListener('click',  () => pick(COLORS['4']));
 
-      // Keyboard shortcuts
+      // --- keyboard shortcuts ---
       window.addEventListener('keydown', (e) => {
         const key = e.key;
 
-        // Colors 1..4
+        // color keys 1..4
         if (!e.ctrlKey && !e.metaKey && COLOR_KEYS.includes(key)) {
           pick(COLORS[key]);
           return;
         }
-        // Eraser toggle
+        // eraser toggle
         if (!e.ctrlKey && !e.metaKey && (key === 'e' || key === 'E')) {
           toggleEraser();
           return;
         }
-        // Undo / Redo
+        // undo / redo
         const isMod = e.ctrlKey || e.metaKey;
         if (isMod && key.toLowerCase() === 'z' && !e.shiftKey) {
           e.preventDefault();
@@ -337,25 +353,25 @@
         }
       });
 
+      // Prevent selection/callouts/menus (no auto-select/highlight)
+      document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+      document.addEventListener('selectstart', (e) => e.preventDefault());
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+
       // Handle viewport changes (especially iOS address bar show/hide)
       const vv = window.visualViewport;
       if (vv) vv.addEventListener('resize', resizeToViewport);
       window.addEventListener('resize', resizeToViewport);
 
-      // Prevent iOS Safari long-press callout and selection while drawing
-      document.addEventListener('gesturestart', (e) => e.preventDefault());
-      document.addEventListener('selectstart', (e) => e.preventDefault());
-      window.addEventListener('contextmenu', (e) => e.preventDefault());
-
       // Init
       setActiveSwatchByColor(currentColor);
+      updatePenColorVar();
       setToggleUI();
       resizeToViewport();
 
-      // If launched from Home Screen (iOS), navigator.standalone is true
-      // We don't need to do anything special besides sizing & safe-area handling,
-      // but this line proves the mode if you ever want to branch styles:
-      if (window.navigator.standalone) document.documentElement.classList.add('ios-standalone');
+      if (window.navigator.standalone) {
+        document.documentElement.classList.add('ios-standalone');
+      }
     })();
   </script>
 </body>
